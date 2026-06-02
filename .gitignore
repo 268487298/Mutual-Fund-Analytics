@@ -1,0 +1,56 @@
+# Virtual Environment
+mutual/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# Environment variables
+.env
+.env.*
+
+# Logs
+*.log
+
+# Build files
+build/
+dist/
+*.egg-info/
+
+# Testing
+.pytest_cache/
+.coverage
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Power BI temporary files
+*.tmp
+*.bak
+*.lck
+
+# Generated reports (optional)
+reports/*.pdf
+reports/*.pptx
+
+# Data files (optional - uncomment if datasets are large)
+# data/raw/*
+# data/processed/*
+# data/db/*
+
+# Jupyter runtime
+.jupyter/
+
+# Python packaging
+pip-wheel-metadata/
+
+# IDE files
+.idea/
