@@ -18,16 +18,37 @@ print("Connected to SQLite database.")
 
 DATA_DIR = Path("data/processed")
 
-fund_master = pd.read_csv(DATA_DIR / "clean_fund_master.csv")
-nav_history = pd.read_csv(DATA_DIR / "clean_nav_history.csv")
-transactions = pd.read_csv(DATA_DIR / "clean_investor_transactions.csv")
+DATE_COLUMNS = {
+    "clean_fund_master.csv": ["launch_date"],
+    "clean_nav_history.csv": ["date"],
+    "clean_investor_transactions.csv": ["transaction_date"],
+    "clean_portfolio_holdings.csv": ["portfolio_date"],
+    "clean_aum_by_fund_house.csv": ["date"],
+    "clean_benchmark_indices.csv": ["date"],
+}
+
+
+def load_processed_csv(filename):
+    parse_dates = DATE_COLUMNS.get(filename, [])
+    df = pd.read_csv(DATA_DIR / filename, parse_dates=parse_dates)
+
+    for date_col in parse_dates:
+        if date_col in df.columns:
+            df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+
+    return df
+
+
+fund_master = load_processed_csv("clean_fund_master.csv")
+nav_history = load_processed_csv("clean_nav_history.csv")
+transactions = load_processed_csv("clean_investor_transactions.csv")
 performance = pd.read_csv(DATA_DIR / "clean_scheme_performance.csv")
-portfolio = pd.read_csv(DATA_DIR / "clean_portfolio_holdings.csv")
-aum = pd.read_csv(DATA_DIR / "clean_aum_by_fund_house.csv")
+portfolio = load_processed_csv("clean_portfolio_holdings.csv")
+aum = load_processed_csv("clean_aum_by_fund_house.csv")
 sip = pd.read_csv(DATA_DIR / "clean_monthly_sip_inflows.csv")
 category_inflows = pd.read_csv(DATA_DIR / "clean_category_inflows.csv")
 folio_count = pd.read_csv(DATA_DIR / "clean_industry_folio_count.csv")
-benchmark = pd.read_csv(DATA_DIR / "clean_benchmark_indices.csv")
+benchmark = load_processed_csv("clean_benchmark_indices.csv")
 
 # =========================
 # Create dim_date
@@ -36,10 +57,10 @@ benchmark = pd.read_csv(DATA_DIR / "clean_benchmark_indices.csv")
 date_columns = []
 
 for df, col in [
-    (nav_history, "nav_date"),
+    (nav_history, "date"),
     (transactions, "transaction_date"),
     (performance, "as_of_date"),
-    (portfolio, "date"),
+    (portfolio, "portfolio_date"),
     (aum, "date"),
     (sip, "month"),
     (benchmark, "date")
