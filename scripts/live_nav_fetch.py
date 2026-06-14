@@ -1,10 +1,13 @@
-import requests
-import pandas as pd
-from pathlib import Path
-import time
+"""Fetch NAV history for selected mutual fund schemes and save raw NAV CSV files."""
 
-# Mutual Fund Schemes
-schemes = {
+import time
+from pathlib import Path
+from typing import Dict, List
+
+import pandas as pd
+import requests
+
+SCHEMES: Dict[str, str] = {
     "hdfc_top100": "125497",
     "sbi_bluechip": "119551",
     "icici_bluechip": "120503",
@@ -13,64 +16,47 @@ schemes = {
     "kotak_bluechip": "120841",
 }
 
-# Create output folder
-output_dir = Path("data/raw/nav_data")
-output_dir.mkdir(parents=True, exist_ok=True)
+ROOT_DIR = Path(__file__).resolve().parent.parent
+OUTPUT_DIR = ROOT_DIR / "data" / "raw" / "nav_data"
 
-successful_schemes = []
-failed_schemes = []
 
-print("Fetching NAV data...\n")
-
-for scheme_name, scheme_code in schemes.items():
-
+def fetch_scheme_nav(scheme_name: str, scheme_code: str) -> pd.DataFrame:
+    """Fetch NAV history for a single mutual fund scheme."""
     url = f"https://api.mfapi.in/mf/{scheme_code}"
+    for attempt in range(3):
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        return pd.DataFrame(response.json()["data"])
+    raise RuntimeError(f"Unable to fetch NAV data for {scheme_name}")
 
-    try:
-        # Retry up to 3 times
-        for attempt in range(3):
-            try:
-                response = requests.get(url, timeout=15)
-                response.raise_for_status()
-                break
-            except Exception:
-                if attempt < 2:
-                    print(f"Retrying {scheme_name} (Attempt {attempt + 2}/3)...")
-                    time.sleep(2)
-                else:
-                    raise
 
-        data = response.json()
+def save_nav_csv(scheme_name: str, nav_df: pd.DataFrame) -> Path:
+    """Save NAV history DataFrame to the raw nav_data folder."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    file_path = OUTPUT_DIR / f"{scheme_name}.csv"
+    nav_df.to_csv(file_path, index=False)
+    return file_path
 
-        # Convert NAV history to DataFrame
-        nav_df = pd.DataFrame(data["data"])
 
-        # Save CSV
-        file_path = output_dir / f"{scheme_name}.csv"
-        nav_df.to_csv(file_path, index=False)
+def main() -> int:
+    """Fetch NAV data for all predefined schemes."""
+    successful_schemes: List[str] = []
+    failed_schemes: List[str] = []
 
-        successful_schemes.append(scheme_name)
+    for scheme_name, scheme_code in SCHEMES.items():
+        try:
+            nav_df = fetch_scheme_nav(scheme_name, scheme_code)
+            save_nav_csv(scheme_name, nav_df)
+            successful_schemes.append(scheme_name)
+        except Exception:
+            failed_schemes.append(scheme_name)
 
-        print(f"✓ {scheme_name} saved successfully")
-        print(f"  Rows: {len(nav_df)}")
-        print(f"  File: {file_path}\n")
+    print("NAV fetch completed.")
+    print(f"Successful downloads: {len(successful_schemes)}")
+    print(f"Failed downloads: {len(failed_schemes)}")
 
-    except Exception as e:
-        failed_schemes.append(scheme_name)
+    return 0 if not failed_schemes else 1
 
-        print(f"✗ Error fetching {scheme_name}")
-        print(f"  Reason: {e}\n")
 
-print("=" * 50)
-print("DOWNLOAD SUMMARY")
-print("=" * 50)
-
-print(f"\nSuccessful Downloads: {len(successful_schemes)}")
-for scheme in successful_schemes:
-    print(f"✓ {scheme}")
-
-print(f"\nFailed Downloads: {len(failed_schemes)}")
-for scheme in failed_schemes:
-    print(f"✗ {scheme}")
-
-print("\nProcess Completed.")
+if __name__ == "__main__":
+    raise SystemExit(main())

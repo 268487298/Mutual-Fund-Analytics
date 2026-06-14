@@ -1,4 +1,4 @@
-"""Fund recommendation utilities based on scheme performance metrics."""
+"""Recommender support for mutual fund schemes based on Sharpe ratio and risk appetite."""
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -73,11 +73,8 @@ def recommend_top_funds_by_sharpe(
         performance_df = load_scheme_performance()
 
     risk_grade = normalize_risk_grade(risk_appetite)
-
     df = performance_df.copy()
-    df["risk_grade_normalized"] = (
-        df["risk_grade"].astype(str).str.strip().str.lower()
-    )
+    df["risk_grade_normalized"] = df["risk_grade"].astype(str).str.strip().str.lower()
 
     df = df[df["risk_grade_normalized"] == risk_grade.lower()]
     if category is not None:
@@ -100,7 +97,8 @@ def format_recommendations(df: pd.DataFrame) -> List[Dict[str, Any]]:
     return df.to_dict(orient="records")
 
 
-if __name__ == "__main__":
+def main() -> int:
+    """Run the recommender CLI for the current performance CSV."""
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -155,5 +153,10 @@ if __name__ == "__main__":
 
     if recommendations.empty:
         print("No matching funds found for the specified criteria.")
-    else:
-        print(recommendations.to_string(index=False))
+        return 0
+    print(recommendations.to_string(index=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

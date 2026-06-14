@@ -1,24 +1,17 @@
-import pandas as pd
-import sqlite3
+﻿"""Load cleaned processed datasets into the project's SQLite database."""
+
 from pathlib import Path
+import sqlite3
+from typing import Dict, List
 
-# =========================
-# Database Connection
-# =========================
+import pandas as pd
 
-DB_PATH = "data/db/bluestock_mf.db"
-
-conn = sqlite3.connect(DB_PATH)
-
-print("Connected to SQLite database.")
-
-# =========================
-# File Paths
-# =========================
-
-DATA_DIR = Path("data/processed")
-
-DATE_COLUMNS = {
+ROOT_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT_DIR / "data" / "processed"
+DB_DIR = ROOT_DIR / "data" / "db"
+DB_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DB_DIR / "bluestock_mf.db"
+DATE_COLUMNS: Dict[str, List[str]] = {
     "clean_fund_master.csv": ["launch_date"],
     "clean_nav_history.csv": ["date"],
     "clean_investor_transactions.csv": ["transaction_date"],
@@ -27,182 +20,90 @@ DATE_COLUMNS = {
     "clean_benchmark_indices.csv": ["date"],
 }
 
+TABLES = [
+    "dim_fund",
+    "dim_date",
+    "fact_nav",
+    "fact_transactions",
+    "fact_performance",
+    "fact_portfolio",
+    "fact_aum",
+    "fact_sip_industry",
+    "fact_category_inflows",
+    "fact_industry_folio_count",
+    "fact_benchmark_indices",
+]
 
-def load_processed_csv(filename):
+
+def load_processed_csv(filename: str) -> pd.DataFrame:
+    """Load a processed CSV file and coerce date fields to datetime."""
+    path = DATA_DIR / filename
     parse_dates = DATE_COLUMNS.get(filename, [])
-    df = pd.read_csv(DATA_DIR / filename, parse_dates=parse_dates)
-
+    df = pd.read_csv(path, parse_dates=parse_dates)
     for date_col in parse_dates:
         if date_col in df.columns:
             df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-
     return df
 
 
-fund_master = load_processed_csv("clean_fund_master.csv")
-nav_history = load_processed_csv("clean_nav_history.csv")
-transactions = load_processed_csv("clean_investor_transactions.csv")
-performance = pd.read_csv(DATA_DIR / "clean_scheme_performance.csv")
-portfolio = load_processed_csv("clean_portfolio_holdings.csv")
-aum = load_processed_csv("clean_aum_by_fund_house.csv")
-sip = pd.read_csv(DATA_DIR / "clean_monthly_sip_inflows.csv")
-category_inflows = pd.read_csv(DATA_DIR / "clean_category_inflows.csv")
-folio_count = pd.read_csv(DATA_DIR / "clean_industry_folio_count.csv")
-benchmark = load_processed_csv("clean_benchmark_indices.csv")
+def build_dim_date() -> pd.DataFrame:
+    """Build a dimension table of unique dates across processed datasets."""
+    date_series = []
+    sources = {
+        "clean_nav_history.csv": "date",
+        "clean_investor_transactions.csv": "transaction_date",
+        "clean_scheme_performance.csv": "as_of_date",
+        "clean_portfolio_holdings.csv": "portfolio_date",
+        "clean_aum_by_fund_house.csv": "date",
+        "clean_monthly_sip_inflows.csv": "month",
+        "clean_benchmark_indices.csv": "date",
+    }
+    for filename, date_column in sources.items():
+        path = DATA_DIR / filename
+        df = pd.read_csv(path)
+        if date_column in df.columns:
+            date_series.append(pd.to_datetime(df[date_column], errors="coerce"))
 
-# =========================
-# Create dim_date
-# =========================
+    if not date_series:
+        raise ValueError("No date columns found when building dim_date.")
+    all_dates = pd.concat(date_series).dropna().drop_duplicates()
+    dim_date = pd.DataFrame({"date": sorted(all_dates.unique())})
+    dim_date["year"] = dim_date["date"].dt.year
+    dim_date["quarter"] = dim_date["date"].dt.quarter
+    dim_date["month"] = dim_date["date"].dt.month
+    dim_date["is_weekday"] = dim_date["date"].dt.dayofweek < 5
+    return dim_date
 
-date_columns = []
 
-for df, col in [
-    (nav_history, "date"),
-    (transactions, "transaction_date"),
-    (performance, "as_of_date"),
-    (portfolio, "portfolio_date"),
-    (aum, "date"),
-    (sip, "month"),
-    (benchmark, "date")
-]:
-    if col in df.columns:
-        date_columns.append(
-            pd.to_datetime(df[col], errors="coerce")
-        )
+def write_table(conn: sqlite3.Connection, table_name: str, df: pd.DataFrame) -> None:
+    """Write a DataFrame to SQLite, replacing existing contents."""
+    df.to_sql(table_name, conn, if_exists="replace", index=False)
 
-all_dates = pd.concat(date_columns).dropna().drop_duplicates()
 
-dim_date = pd.DataFrame({
-    "date": sorted(all_dates.unique())
-})
+def print_row_counts(conn: sqlite3.Connection) -> None:
+    """Print row counts for all loaded tables."""
+    for table in TABLES:
+        count = pd.read_sql(f"SELECT COUNT(*) AS cnt FROM {table}", conn)["cnt"][0]
+        print(f"{table:<30} {count:,}")
 
-dim_date["year"] = dim_date["date"].dt.year
-dim_date["quarter"] = dim_date["date"].dt.quarter
-dim_date["month"] = dim_date["date"].dt.month
-dim_date["IS_weekday"] = dim_date["date"].dt.dayofweek < 5
 
-# =========================
-# Load Tables
-# =========================
+def main() -> int:
+    """Load all cleaned processed datasets into the SQLite database."""
+    with sqlite3.connect(DB_PATH) as conn:
+        write_table(conn, "dim_fund", load_processed_csv("clean_fund_master.csv"))
+        write_table(conn, "dim_date", build_dim_date())
+        write_table(conn, "fact_nav", load_processed_csv("clean_nav_history.csv"))
+        write_table(conn, "fact_transactions", load_processed_csv("clean_investor_transactions.csv"))
+        write_table(conn, "fact_performance", pd.read_csv(DATA_DIR / "clean_scheme_performance.csv"))
+        write_table(conn, "fact_portfolio", load_processed_csv("clean_portfolio_holdings.csv"))
+        write_table(conn, "fact_aum", load_processed_csv("clean_aum_by_fund_house.csv"))
+        write_table(conn, "fact_sip_industry", pd.read_csv(DATA_DIR / "clean_monthly_sip_inflows.csv"))
+        write_table(conn, "fact_category_inflows", pd.read_csv(DATA_DIR / "clean_category_inflows.csv"))
+        write_table(conn, "fact_industry_folio_count", pd.read_csv(DATA_DIR / "clean_industry_folio_count.csv"))
+        write_table(conn, "fact_benchmark_indices", load_processed_csv("clean_benchmark_indices.csv"))
+        conn.commit()
+    return 0
 
-print("Loading dim_fund...")
-fund_master.to_sql(
-    "dim_fund",
-    conn,
-    if_exists="append",
-    index=False
-)
 
-print("Loading dim_date...")
-dim_date.to_sql(
-    "dim_date",
-    conn,
-    if_exists="append",
-    index=False
-)
-
-print("Loading fact_nav...")
-nav_history.to_sql(
-    "fact_nav",
-    conn,
-    if_exists="append",
-    index=False
-)
-
-print("Loading fact_transactions...")
-transactions.to_sql(
-    "fact_transactions",
-    conn,
-    if_exists="append",
-    index=False
-)
-
-print("Loading fact_performance...")
-performance.to_sql(
-    "fact_performance",
-    conn,
-    if_exists="append",
-    index=False
-)
-
-print("Loading fact_portfolio...")
-portfolio.to_sql(
-    "fact_portfolio",
-    conn,
-    if_exists="append",
-    index=False
-)
-
-print("Loading fact_aum...")
-aum.to_sql(
-    "fact_aum",
-    conn,
-    if_exists="append",
-    index=False
-)
-
-print("Loading fact_sip_industry...")
-sip.to_sql(
-    "fact_sip_industry",
-    conn,
-    if_exists="append",
-    index=False
-)
-
-print("Loading fact_category_inflows...")
-category_inflows.to_sql(
-    "fact_category_inflows",
-    conn,
-    if_exists="append",
-    index=False
-)
-
-print("Loading fact_industry_folio_count...")
-folio_count.to_sql(
-    "fact_industry_folio_count",
-    conn,
-    if_exists="append",
-    index=False
-)
-
-print("Loading fact_benchmark_indices...")
-benchmark.to_sql(
-    "fact_benchmark_indices",
-    conn,
-    if_exists="append",
-    index=False
-)
-
-# =========================
-# Verification
-# =========================
-
-tables = [
-    "dim_fund",
-    "dim_date",
-    "fact_nav",
-    "fact_transactions",
-    "fact_performance",
-    "fact_portfolio",
-    "fact_aum",
-    "fact_sip_industry",
-    "fact_category_inflows",
-    "fact_industry_folio_count",
-    "fact_benchmark_indices"
-]
-
-print("\nRow Counts")
-print("-" * 40)
-
-for table in tables:
-    count = pd.read_sql(
-        f"SELECT COUNT(*) AS cnt FROM {table}",
-        conn
-    )["cnt"][0]
-
-    print(f"{table:<30} {count:,}")
-
-conn.commit()
-conn.close()
-
-print("\nData loading completed successfully.")
+if __name__ == "__main__":
+    raise SystemExit(main())

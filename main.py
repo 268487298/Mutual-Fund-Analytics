@@ -1,15 +1,15 @@
+"""Load raw mutual fund CSV files into the local SQLite database."""
+
 import os
 import sqlite3
 import sys
+from typing import Dict
+
 import pandas as pd
 
-# =========================
-# PATHS
-# =========================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RAW_DIR = os.path.join(BASE_DIR, "data", "raw")
 DB_PATH = os.path.join(BASE_DIR, "bluestock_mf.db")
-
 FILES = {
     "dim_fund": "01_fund_master.csv",
     "fact_nav": "02_nav_history.csv",
@@ -17,80 +17,66 @@ FILES = {
     "fact_performance": "07_scheme_performance.csv",
 }
 
-# =========================
-# CHECK FILES EXIST
-# =========================
-for dataset_name, csv_file in FILES.items():
-    csv_path = os.path.join(RAW_DIR, csv_file)
 
-    if not os.path.exists(csv_path):
-        print(f"❌ Missing CSV file for {dataset_name}: {csv_path}")
-        sys.exit(1)
+def validate_raw_files(raw_dir: str, files: Dict[str, str]) -> None:
+    """Ensure required raw CSV files are present before loading."""
+    missing_files = []
+    for dataset_name, csv_file in files.items():
+        csv_path = os.path.join(raw_dir, csv_file)
+        if not os.path.exists(csv_path):
+            missing_files.append((dataset_name, csv_path))
 
-# =========================
-# LOAD CSV FILES
-# =========================
-try:
-    df_fund = pd.read_csv(os.path.join(RAW_DIR, FILES["dim_fund"]))
-    df_nav = pd.read_csv(os.path.join(RAW_DIR, FILES["fact_nav"]))
-    df_txn = pd.read_csv(os.path.join(RAW_DIR, FILES["fact_transactions"]))
-    df_perf = pd.read_csv(os.path.join(RAW_DIR, FILES["fact_performance"]))
+    if missing_files:
+        for dataset_name, csv_path in missing_files:
+            print(f"Missing CSV file for {dataset_name}: {csv_path}")
+        raise FileNotFoundError("Required raw CSV files are missing.")
 
-    print("✅ CSV files loaded successfully")
 
-except Exception as exc:
-    print("❌ Failed to read CSV files:", exc)
-    sys.exit(1)
+def load_csv_files(raw_dir: str) -> Dict[str, pd.DataFrame]:
+    """Read raw CSV files into pandas DataFrames."""
+    return {
+        "dim_fund": pd.read_csv(os.path.join(raw_dir, FILES["dim_fund"])),
+        "fact_nav": pd.read_csv(os.path.join(raw_dir, FILES["fact_nav"])),
+        "fact_transactions": pd.read_csv(os.path.join(raw_dir, FILES["fact_transactions"])),
+        "fact_performance": pd.read_csv(os.path.join(raw_dir, FILES["fact_performance"])),
+    }
 
-# =========================
-# LOAD INTO SQLITE
-# =========================
-conn = None
 
-try:
-    conn = sqlite3.connect(DB_PATH)
-
-    # Load data into tables
-    df_fund.to_sql("dim_fund", conn, if_exists="replace", index=False)
-    df_nav.to_sql("fact_nav", conn, if_exists="replace", index=False)
-    df_txn.to_sql("fact_transactions", conn, if_exists="replace", index=False)
-    df_perf.to_sql("fact_performance", conn, if_exists="replace", index=False)
-
-    cursor = conn.cursor()
-
-    # Row counts
-    cursor.execute("SELECT COUNT(*) FROM dim_fund")
-    print("dim_fund rows:", cursor.fetchone()[0])
-
-    cursor.execute("SELECT COUNT(*) FROM fact_nav")
-    print("fact_nav rows:", cursor.fetchone()[0])
-
-    cursor.execute("SELECT COUNT(*) FROM fact_transactions")
-    print("fact_transactions rows:", cursor.fetchone()[0])
-
-    cursor.execute("SELECT COUNT(*) FROM fact_performance")
-    print("fact_performance rows:", cursor.fetchone()[0])
-
-    # Show columns from dim_fund
-    print("\n=== dim_fund columns ===")
-    cursor.execute("PRAGMA table_info(dim_fund)")
+def print_table_info(cursor: sqlite3.Cursor, table_name: str) -> None:
+    """Print row counts and schema info for a table."""
+    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+    print(f"{table_name} rows: {cursor.fetchone()[0]}")
+    print(f"\n=== {table_name} columns ===")
+    cursor.execute(f"PRAGMA table_info({table_name})")
     for col in cursor.fetchall():
         print(col)
 
-    # Show columns from fact_transactions
-    print("\n=== fact_transactions columns ===")
-    cursor.execute("PRAGMA table_info(fact_transactions)")
-    for col in cursor.fetchall():
-        print(col)
 
-    conn.commit()
+def write_tables_to_db(db_path: str, tables: Dict[str, pd.DataFrame]) -> None:
+    """Write DataFrames to the SQLite database."""
+    with sqlite3.connect(db_path) as conn:
+        for table_name, data_frame in tables.items():
+            data_frame.to_sql(table_name, conn, if_exists="replace", index=False)
 
-    print("\n✅ All datasets loaded into bluestock_mf.db")
+        cursor = conn.cursor()
+        print_table_info(cursor, "dim_fund")
+        print_table_info(cursor, "fact_transactions")
+        conn.commit()
 
-except Exception as exc:
-    print("❌ Database error:", exc)
 
-finally:
-    if conn:
-        conn.close()
-        print("🔒 Database connection closed")
+def main() -> int:
+    """Run the raw CSV ingestion pipeline."""
+    try:
+        validate_raw_files(RAW_DIR, FILES)
+        data_frames = load_csv_files(RAW_DIR)
+        print("Raw CSV files validated and loaded.")
+        write_tables_to_db(DB_PATH, data_frames)
+        print("All datasets loaded into bluestock_mf.db")
+        return 0
+    except Exception as exc:
+        print("Failed to load raw CSV files:", exc)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
